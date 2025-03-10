@@ -3,6 +3,8 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Joystick } from 'react-joystick-component';
 import * as THREE from 'three';
+import PlayerCharacter from './PlayerCharacter';
+import FootballField from './FootballField';
 
 // Define types for props and state
 interface GameLogicProps {
@@ -12,7 +14,7 @@ interface GameLogicProps {
   joystickMove: { x: number; y: number };
   setBallVelocity: (velocity: { x: number; z: number }) => void;
   setScore: React.Dispatch<React.SetStateAction<number>>;
-  goalScored: boolean; // Add this
+  goalScored: boolean; 
   setGoalScored: (scored: boolean) => void;
   setKeys: React.Dispatch<React.SetStateAction<{ w: boolean; a: boolean; s: boolean; d: boolean; space: boolean; sprint: boolean }>>;
   setPowerLevel: (level: number) => void;
@@ -28,7 +30,7 @@ function GameLogic({
   joystickMove,
   setBallVelocity,
   setScore,
-  goalScored, // Add this
+  goalScored, 
   setGoalScored,
   setKeys,
   setPowerLevel,
@@ -48,7 +50,7 @@ function GameLogic({
   const [playerStamina, setPlayerStamina] = useState(100);
   const [sprintActive, setSprintActive] = useState(false);
   const [lastTouchedBy, setLastTouchedBy] = useState<string | null>(null);
-  const [playerPreviousPosition, setPlayerPreviousPosition] = useState({ x: 0, z: 5 }); // Initial position
+  const [playerPreviousPosition, setPlayerPreviousPosition] = useState({ x: 0, z: 5 });
 
   useFrame((state, delta) => {
     if (!gameStarted || gameOver) return;
@@ -72,6 +74,7 @@ function GameLogic({
       if (keys.a || joystickMove.x < 0) moveX -= 1;
       if (keys.d || joystickMove.x > 0) moveX += 1;
     }
+
     if (moveX !== 0 || moveZ !== 0) {
       const direction = new THREE.Vector3(moveX, 0, moveZ).normalize();
       setPlayerDirection(direction);
@@ -126,23 +129,36 @@ function GameLogic({
         new THREE.Vector3(ballRef.current.position.x, 0, ballRef.current.position.z)
       );
 
-      if (distanceToBall < 1.5 && ballHeight < 1 && !powerCharging) {
+      // Ball Control Zone System
+      const perfectControlZone = 0.8;
+      const looseControlZone = 1.5;
+      const isInPerfectControl = distanceToBall < perfectControlZone && ballHeight < 1;
+      const isInLooseControl = distanceToBall < looseControlZone && ballHeight < 1;
+
+      if (isInLooseControl && !powerCharging) {
         const playerVelocity = new THREE.Vector3(moveX * speed, 0, moveZ * speed);
         const directionVector = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, playerRef.current.rotation.y, 0));
+        
+        // Dynamic dribble distance based on player speed and control zone
         const playerSpeed = Math.sqrt(moveX * moveX + moveZ * moveZ) * speed;
-        const dribbleDistance = Math.max(0.5, Math.min(1.5, playerSpeed * 0.1 + 0.5));
+        const controlQuality = 1 - (distanceToBall - perfectControlZone) / (looseControlZone - perfectControlZone);
+        const dribbleDistance = Math.max(0.5, Math.min(1.5, playerSpeed * 0.15 + 0.5));
+        
         const targetBallPosition = new THREE.Vector3(playerPreviousPosition.x, 0, playerPreviousPosition.z).add(
           directionVector.multiplyScalar(dribbleDistance)
         );
 
         const positionError = targetBallPosition.clone().sub(ballRef.current.position);
-        const k = 1;
+        const k = isInPerfectControl ? 2 : 1 * controlQuality;
         const desiredVelocityAdjustment = positionError.multiplyScalar(k);
 
-        const desiredVelocityX = playerVelocity.x + desiredVelocityAdjustment.x;
-        const desiredVelocityZ = playerVelocity.z + desiredVelocityAdjustment.z;
+        // Add slight randomization to ball control based on speed
+        const randomFactor = 0.05 * (1 - controlQuality) * playerSpeed;
+        const desiredVelocityX = playerVelocity.x + desiredVelocityAdjustment.x + (Math.random() - 0.5) * randomFactor;
+        const desiredVelocityZ = playerVelocity.z + desiredVelocityAdjustment.z + (Math.random() - 0.5) * randomFactor;
 
-        const smoothingFactor = 0.05;
+        // Smoother ball control transition
+        const smoothingFactor = isInPerfectControl ? 0.15 : 0.08;
         velocityX += (desiredVelocityX - velocityX) * smoothingFactor;
         velocityZ += (desiredVelocityZ - velocityZ) * smoothingFactor;
 
@@ -151,16 +167,26 @@ function GameLogic({
         setLastTouchedBy('player');
       } else {
         if (!keys.space && powerCharging && canKick && distanceToBall < 2 && ballHeight < 1) {
-          const kickPower = 10 + (powerCharge / 100) * 20;
+          // Enhanced kicking system
+          const kickPower = 10 + (powerCharge / 100) * 25; // Increased max power
           const kickDirection = playerDirection.clone();
+          
+          // Add slight variance to kick direction based on power
+          const directionVariance = (1 - powerCharge / 100) * 0.2; // More variance at lower power
+          kickDirection.x += (Math.random() - 0.5) * directionVariance;
+          kickDirection.z += (Math.random() - 0.5) * directionVariance;
+          
           const kickForce = kickDirection.normalize().multiplyScalar(kickPower);
           velocityX = kickForce.x;
           velocityZ = kickForce.z;
 
+          // Enhanced ball lift mechanics
           if (powerCharge > 50) {
-            setBallVerticalVelocity(5 + (powerCharge - 50) / 50 * 10 + Math.random() * 2);
+            const liftPower = 5 + (powerCharge - 50) / 50 * 12;
+            const randomLift = Math.random() * 2 - 1; // -1 to 1
+            setBallVerticalVelocity(liftPower + randomLift);
           } else {
-            setBallVerticalVelocity(Math.random() * 2);
+            setBallVerticalVelocity(Math.random() * 3); // Low power shots stay low
           }
 
           setCanKick(false);
@@ -168,54 +194,134 @@ function GameLogic({
           setLastTouchedBy('player');
         }
 
-        const friction = ballHeight > 0 ? 0.99 : 0.98;
-        velocityX *= friction;
-        velocityZ *= friction;
+        // Dynamic friction based on conditions
+        const airResistance = 0.995;
+        const groundFriction = ballHeight > 0 ? airResistance : 0.98;
+        const speedBasedFriction = Math.min(1, Math.sqrt(velocityX * velocityX + velocityZ * velocityZ) * 0.1);
+        const finalFriction = groundFriction - speedBasedFriction * 0.02;
+        
+        velocityX *= finalFriction;
+        velocityZ *= finalFriction;
 
         if (ballHeight > 0 || ballVerticalVelocity !== 0) {
-          setBallVerticalVelocity((prev) => prev - 9.8 * delta);
+          // Enhanced gravity and bounce physics
+          const gravity = 9.8;
+          setBallVerticalVelocity((prev) => prev - gravity * delta);
           setBallHeight((prev) => prev + ballVerticalVelocity * delta);
 
           if (ballHeight <= 0 && ballVerticalVelocity < 0) {
             setBallHeight(0);
-            setBallVerticalVelocity((prev) => -prev * 0.7);
+            const bounceEfficiency = 0.7; // Ball energy retention
+            const speedImpact = Math.min(1, Math.abs(ballVerticalVelocity) / 10);
+            setBallVerticalVelocity((prev) => -prev * bounceEfficiency * speedImpact);
+            
             if (Math.abs(ballVerticalVelocity) < 1) {
               setBallVerticalVelocity(0);
             }
-            velocityX *= 0.9;
-            velocityZ *= 0.9;
+            // Add horizontal energy loss on bounce
+            velocityX *= 0.85;
+            velocityZ *= 0.85;
           }
         }
       }
 
+      // Store velocities for next frame
+      ballRef.current.userData.velocityX = velocityX;
+      ballRef.current.userData.velocityZ = velocityZ;
+      setBallVelocity({ x: velocityX, z: velocityZ });
+
+      // Enhanced boundary physics with dynamic bouncing
+      const bounds = { x: 25, z: 15 };
+      const bounceDamping = 0.8; // Base energy retention on bounce
+      const minBounceSpeed = 0.5; // Minimum speed to bounce
+      const wallElasticity = 1.2; // Slight speed boost on wall hits for more dynamic play
+
+      // Side walls (X-axis)
+      if (Math.abs(ballRef.current.position.x) > bounds.x) {
+        // Calculate impact velocity for more realistic bounce
+        const impactSpeed = Math.abs(velocityX);
+        if (impactSpeed > minBounceSpeed) {
+          // Add some vertical bounce based on impact speed
+          const verticalBoost = Math.min(impactSpeed * 0.2, 4);
+          setBallVerticalVelocity((prev) => Math.max(prev, verticalBoost));
+          
+          // Dynamic bounce effect
+          velocityX = -velocityX * bounceDamping * wallElasticity;
+          
+          // Add slight random deflection
+          const deflection = (Math.random() - 0.5) * 0.2;
+          velocityZ += velocityZ * deflection;
+        } else {
+          velocityX = -velocityX * bounceDamping;
+        }
+        
+        // Keep ball in bounds
+        ballRef.current.position.x = Math.sign(ballRef.current.position.x) * bounds.x;
+      }
+
+      // Goal walls and back walls (Z-axis)
+      const isInGoalArea = Math.abs(ballRef.current.position.x) <= 7; // Goal width
+      const backWallZ = bounds.z;
+      
+      if (Math.abs(ballRef.current.position.z) > backWallZ) {
+        // Only bounce if not in goal area or if hitting back wall
+        if (!isInGoalArea || ballRef.current.position.z > backWallZ) {
+          const impactSpeed = Math.abs(velocityZ);
+          if (impactSpeed > minBounceSpeed) {
+            // Add vertical bounce and spin effect
+            const verticalBoost = Math.min(impactSpeed * 0.25, 5);
+            setBallVerticalVelocity((prev) => Math.max(prev, verticalBoost));
+            
+            // Dynamic bounce with wall elasticity
+            velocityZ = -velocityZ * bounceDamping * wallElasticity;
+            
+            // Add random deflection for more unpredictable bounces
+            const deflection = (Math.random() - 0.5) * 0.3;
+            velocityX += velocityX * deflection;
+          } else {
+            velocityZ = -velocityZ * bounceDamping;
+          }
+          
+          // Keep ball in bounds
+          ballRef.current.position.z = Math.sign(ballRef.current.position.z) * backWallZ;
+        }
+      }
+
+      // Corner bounce enhancement
+      const isNearCorner = Math.abs(ballRef.current.position.x) > bounds.x * 0.9 && 
+                          Math.abs(ballRef.current.position.z) > bounds.z * 0.9;
+      
+      if (isNearCorner) {
+        const cornerBounceFactor = 1.3; // Extra bounce in corners
+        const totalVelocity = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
+        
+        if (totalVelocity > minBounceSpeed) {
+          // Add some vertical bounce in corners
+          const cornerVerticalBoost = Math.min(totalVelocity * 0.3, 6);
+          setBallVerticalVelocity((prev) => Math.max(prev, cornerVerticalBoost));
+          
+          // Enhance corner bounces
+          velocityX *= -cornerBounceFactor;
+          velocityZ *= -cornerBounceFactor;
+        }
+      }
+
+      // Update ball velocities after boundary checks
+      ballRef.current.userData.velocityX = velocityX;
+      ballRef.current.userData.velocityZ = velocityZ;
+
+      // Apply ball movement and rotation
       ballRef.current.position.x += velocityX * delta;
       ballRef.current.position.z += velocityZ * delta;
       ballRef.current.position.y = ballHeight;
 
+      // Enhanced ball rotation based on velocity and height
       const ballSpeed = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
       if (ballSpeed > 0.1) {
         const rotationAxis = new THREE.Vector3(-velocityZ, 0, velocityX).normalize();
-        ballRef.current.rotateOnAxis(rotationAxis, ballSpeed * delta * 2);
+        const rotationSpeed = ballHeight > 0 ? 1.5 : 2.5; // Less rotation in air
+        ballRef.current.rotateOnAxis(rotationAxis, ballSpeed * delta * rotationSpeed);
       }
-
-      // Adjusted field boundaries to allow goal scoring
-      const bounds = { x: 25, z: 15 };
-      if (ballRef.current.position.x < -bounds.x || ballRef.current.position.x > bounds.x) {
-        velocityX *= -0.8;
-        ballRef.current.position.x = Math.max(-bounds.x, Math.min(bounds.x, ballRef.current.position.x));
-      }
-      // Modified z-boundary to allow ball to pass through goal area
-      if (
-        ballRef.current.position.z > bounds.z ||
-        (ballRef.current.position.z < -bounds.z && (ballRef.current.position.x < -5 || ballRef.current.position.x > 5))
-      ) {
-        velocityZ *= -0.8;
-        ballRef.current.position.z = Math.max(-bounds.z, Math.min(bounds.z, ballRef.current.position.z));
-      }
-
-      ballRef.current.userData.velocityX = velocityX;
-      ballRef.current.userData.velocityZ = velocityZ;
-      setBallVelocity({ x: velocityX, z: velocityZ });
 
       // Enhanced Goal Detection with Immediate Ball Reset
       const { x, z } = ballRef.current.position;
@@ -278,7 +384,7 @@ function GameLogic({
 
             if (type === 'player') {
               characterVelocity = new THREE.Vector3(moveX, 0, moveZ).normalize();
-              characterSpeed = speed * (sprintActive ? 1.5 : 1.0);
+              characterSpeed = 5 * (sprintActive ? 1.5 : 1.0);
             } else if (type === 'defender' || type === 'goalkeeper') {
               characterVelocity = normal.clone().negate();
               characterSpeed = type === 'defender' ? 4 : 3;
@@ -444,131 +550,115 @@ function GameLogic({
     <>
       <ambientLight intensity={0.5} />
       <directionalLight position={[5, 5, 5]} intensity={1} castShadow={false} />
-      <mesh position={[0, -0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[50, 30]} />
-        <meshStandardMaterial color="#4CAF50" />
-      </mesh>
-      {renderFieldMarkings()}
+      <hemisphereLight intensity={0.3} groundColor="#2e7d32" />
+
+      {/* Football Field */}
+      <FootballField width={50} length={30} />
+
       <group ref={playerRef} position={[0, 0, 5]}>
-        <mesh position={[0, 0.5, 0]}>
-          <boxGeometry args={[0.8, 1, 0.8]} />
-          <meshStandardMaterial color="red" />
-        </mesh>
-        <mesh position={[0, 1.2, 0]}>
-          <sphereGeometry args={[0.4, 16, 16]} />
-          <meshStandardMaterial color="#FFA07A" />
-        </mesh>
-      </group>
-      <group ref={defenderRef} position={[5, 0, -5]}>
-        <mesh position={[0, 0.5, 0]}>
-          <boxGeometry args={[0.8, 1, 0.8]} />
-          <meshStandardMaterial color="blue" />
-        </mesh>
-        <mesh position={[0, 1.2, 0]}>
-          <sphereGeometry args={[0.4, 16, 16]} />
-          <meshStandardMaterial color="#ADD8E6" />
-        </mesh>
-      </group>
-      <group ref={goalkeeperRef} position={[0, 0, -12]}>
-        <mesh position={[0, 0.5, 0]}>
-          <boxGeometry args={[0.8, 1, 0.8]} />
-          <meshStandardMaterial color="yellow" />
-        </mesh>
-        <mesh position={[0, 1.2, 0]}>
-          <sphereGeometry args={[0.4, 16, 16]} />
-          <meshStandardMaterial color="#FFFACD" />
-        </mesh>
+        <PlayerCharacter 
+          isMoving={keys.w || keys.s || keys.a || keys.d || 
+            Math.abs(joystickMove.x) > 0.1 || Math.abs(joystickMove.y) > 0.1}
+          isKicking={powerCharging}
+          isRunning={sprintActive}
+          color="#2196f3"
+        />
       </group>
       <mesh ref={ballRef} position={[0, 0, 10]}>
-        <sphereGeometry args={[0.5, 16, 16]} />
-        <meshStandardMaterial color="white" />
+        <sphereGeometry args={[0.2, 32, 32]} />
+        <meshPhongMaterial color="white" />
       </mesh>
-      {/* Enhanced 3D Goalposts */}
-      <group position={[0, 0, -15]}>
-        {/* Left post */}
-        <mesh position={[-5, 1.5, 0]}>
-          <cylinderGeometry args={[0.1, 0.1, 3, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Right post */}
-        <mesh position={[5, 1.5, 0]}>
-          <cylinderGeometry args={[0.1, 0.1, 3, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Crossbar */}
-        <mesh position={[0, 3, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.1, 0.1, 10, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Back supports - vertical */}
-        <mesh position={[-5, 1.5, -1]}>
-          <cylinderGeometry args={[0.08, 0.08, 3, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        <mesh position={[5, 1.5, -1]}>
-          <cylinderGeometry args={[0.08, 0.08, 3, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Back supports - horizontal */}
-        <mesh position={[0, 3, -1]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.08, 0.08, 10, 16]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Connecting supports */}
-        <mesh position={[-5, 3, -0.5]} rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.05, 0.05, 1, 8]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        <mesh position={[5, 3, -0.5]} rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.05, 0.05, 1, 8]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        <mesh position={[-5, 0, -0.5]} rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.05, 0.05, 1, 8]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        <mesh position={[5, 0, -0.5]} rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.05, 0.05, 1, 8]} />
-          <meshStandardMaterial color="white" />
-        </mesh>
-        {/* Enhanced 3D Net */}
-        <group>
-          {/* Vertical net threads */}
-          {Array(11).fill(0).map((_, i) => (
-            <mesh key={`vnet-${i}`} position={[-5 + i, 1.5, -0.5]} rotation={[0, 0, 0]}>
-              <cylinderGeometry args={[0.01, 0.01, 3, 4]} />
-              <meshStandardMaterial color="white" opacity={0.5} transparent={true} />
-            </mesh>
-          ))}
-          {/* Horizontal net threads */}
-          {Array(7).fill(0).map((_, i) => (
-            <mesh key={`hnet-${i}`} position={[0, 0.5 + i * 0.5, -0.5]} rotation={[0, 0, Math.PI / 2]}>
-              <cylinderGeometry args={[0.01, 0.01, 10, 4]} />
-              <meshStandardMaterial color="white" opacity={0.5} transparent={true} />
-            </mesh>
-          ))}
-          {/* Back net */}
-          <mesh position={[0, 1.5, -1]} rotation={[Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[10, 3]} />
-            <meshStandardMaterial color="white" opacity={0.2} transparent={true} wireframe={true} />
-          </mesh>
-          {/* Top net */}
-          <mesh position={[0, 3, -0.5]} rotation={[0, 0, 0]}>
-            <planeGeometry args={[10, 1]} />
-            <meshStandardMaterial color="white" opacity={0.2} transparent={true} wireframe={true} />
-          </mesh>
-          {/* Side nets */}
-          <mesh position={[-5, 1.5, -0.5]} rotation={[0, Math.PI / 2, 0]}>
-            <planeGeometry args={[1, 3]} />
-            <meshStandardMaterial color="white" opacity={0.2} transparent={true} wireframe={true} />
-          </mesh>
-          <mesh position={[5, 1.5, -0.5]} rotation={[0, Math.PI / 2, 0]}>
-            <planeGeometry args={[1, 3]} />
-            <meshStandardMaterial color="white" opacity={0.2} transparent={true} wireframe={true} />
-          </mesh>
-        </group>
+      <group ref={defenderRef} position={[5, 0, -5]}>
+        <PlayerCharacter 
+          isMoving={true}
+          isKicking={false}
+          isRunning={true}
+          color="#f44336"
+        />
       </group>
+      <group ref={goalkeeperRef} position={[0, 0, -12]}>
+        <PlayerCharacter 
+          isMoving={true}
+          isKicking={false}
+          isRunning={false}
+          color="#4caf50"
+        />
+      </group>
+      {/* Goal Posts */}
+      <GoalPost position={[0, 0, -15]} rotation={0} />
+      {/* <GoalPost position={[0, 0, 15]} rotation={Math.PI} /> */}
     </>
+  );
+}
+
+function GoalPost({ position, rotation = 0 }) {
+  const postMaterial = new THREE.MeshStandardMaterial({ 
+    color: '#ffffff',
+    metalness: 0.6,
+    roughness: 0.2,
+  });
+
+  const postWidth = 0.2;
+  const goalWidth = 10;
+  const goalHeight = 5;
+  const goalDepth = 3;
+  const netMaterial = new THREE.MeshStandardMaterial({ 
+    color: '#ffffff',
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide 
+  });
+
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      {/* Left post */}
+      <mesh position={[-goalWidth/2, goalHeight/2, 0]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth, postWidth, goalHeight, 16]} />
+      </mesh>
+
+      {/* Right post */}
+      <mesh position={[goalWidth/2, goalHeight/2, 0]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth, postWidth, goalHeight, 16]} />
+      </mesh>
+
+      {/* Crossbar */}
+      <mesh position={[0, goalHeight, 0]} rotation={[0, 0, Math.PI/2]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth, postWidth, goalWidth + postWidth*2, 16]} />
+      </mesh>
+
+      {/* Support bars */}
+      <mesh position={[-goalWidth/2, goalHeight/2, -goalDepth]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth/2, postWidth/2, goalDepth, 16]} />
+      </mesh>
+      <mesh position={[goalWidth/2, goalHeight/2, -goalDepth]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth/2, postWidth/2, goalDepth, 16]} />
+      </mesh>
+      <mesh position={[0, goalHeight, -goalDepth]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth/2, postWidth/2, goalDepth, 16]} />
+      </mesh>
+
+      {/* Top support bar */}
+      <mesh position={[0, goalHeight, -goalDepth]} rotation={[0, 0, Math.PI/2]} material={postMaterial}>
+        <cylinderGeometry args={[postWidth/2, postWidth/2, goalWidth, 16]} />
+      </mesh>
+
+      {/* Net */}
+      {/* Back */}
+      <mesh position={[0, goalHeight/2, -goalDepth]} material={netMaterial}>
+        <planeGeometry args={[goalWidth, goalHeight]} />
+      </mesh>
+      {/* Top */}
+      <mesh position={[0, goalHeight, -goalDepth/2]} rotation={[Math.PI/2, 0, 0]} material={netMaterial}>
+        <planeGeometry args={[goalWidth, goalDepth]} />
+      </mesh>
+      {/* Sides */}
+      <mesh position={[-goalWidth/2, goalHeight/2, -goalDepth/2]} rotation={[0, Math.PI/2, 0]} material={netMaterial}>
+        <planeGeometry args={[goalDepth, goalHeight]} />
+      </mesh>
+      <mesh position={[goalWidth/2, goalHeight/2, -goalDepth/2]} rotation={[0, Math.PI/2, 0]} material={netMaterial}>
+        <planeGeometry args={[goalDepth, goalHeight]} />
+      </mesh>
+    </group>
   );
 }
 
@@ -704,7 +794,7 @@ function Game() {
   joystickMove={joystickMove}
   setBallVelocity={setBallVelocity}
   setScore={setScore}
-  goalScored={goalScored} // Add this
+  goalScored={goalScored} 
   setGoalScored={setGoalScored}
   setKeys={setKeys}
   setPowerLevel={setPowerLevel}
